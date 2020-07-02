@@ -35,6 +35,8 @@ import sys
 import tempfile
 import subprocess
 import time
+import socket
+import struct
 
 import colorama
 import serial
@@ -930,10 +932,34 @@ class MpFileShell(cmd.Cmd):
         status, IMU status, etc.
         """
         print("Telemetry data:")
+        try:
+            MCAST_GRP = '224.11.11.11'
+            MCAST_PORT = 31337
+            IS_ALL_GROUPS = False
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if IS_ALL_GROUPS:
+                # on this port, receives ALL multicast groups
+                sock.bind(('', MCAST_PORT))
+            else:
+                # on this port, listen ONLY to MCAST_GRP
+                sock.bind((MCAST_GRP, MCAST_PORT))
+            mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+            while True:
+              print(sock.recv(10240))
+        except KeyboardInterrupt:
+            pass
+
+        """
         print("IMU status: ", end="")
         print(self.fe.eval_string_expr("a.imu_status()"))
         print("Motor status: ", end="")
         print(self.fe.eval_string_expr("a.motor_status()"))
+        """
 
     def do_calibrate(self, args):
         """calibrate
@@ -1045,6 +1071,7 @@ class MpFileShell(cmd.Cmd):
         telemetry thread if it is already running (which it is by default).
         """
         print("Stopping existing telemetry-sending thread...")
+
         ret, ret_err = self.fe.exec_raw("a._run_telem_thread = False")
         time.sleep(1)
         print("Starting a new telemetry-sending thread...")

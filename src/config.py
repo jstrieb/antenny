@@ -27,7 +27,7 @@ _defaults = {
 
                 # Telemetry settings
                 "telem_destaddr": "224.11.11.11",
-                "telem_destport": "31337",
+                "telem_destport": 31337,
 
                 # Pins
                 "gps_uart_tx": 33,
