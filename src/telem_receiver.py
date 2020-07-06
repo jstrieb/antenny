@@ -14,3 +14,9 @@ class TelemReceiver:
     def get(self):
         """Blocking call to receive data and deserialize it."""
         return json.loads(self.sock.recv(self.buffer_size).decode('utf-8'))
+
+if __name__ == "__main__":
+    telem_receiver = TelemReceiver(31337)
+    print("Receiving data...")
+    while True:
+        print(json.dumps(telem_receiver.get(), indent=2))
