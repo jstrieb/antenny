@@ -5,9 +5,12 @@ import logging
 import time
 import utime
 import uasyncio
+import ssd1306
 import _thread
+from bno055 import *
+from servtor import ServTor
+from micropyGPS import MicropyGPS
 import socket
-import ujson
 
 import config as cfg
 
@@ -103,7 +106,9 @@ class TelemetrySenderUDP:
         self.initSocket()
 
     def initSocket(self):
-        self.mcast_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.mcast_send_socket = socket.socket(socket.AF_INET,
+                socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        #self.mcast_send_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
     def set_destination(self, multicast_ipaddr):
         self.dstaddr = multicast_ipaddr
@@ -116,12 +121,8 @@ class TelemetrySenderUDP:
 
     def sendTelemTick(self):
         with self.socket_lock:
-            tick_str = ujson.dumps(self.cur_telem).encode("utf-8")
-            try:
-                self.mcast_send_socket.sendto(tick_str, (self.dstaddr, self.dstport))
-                print("Sending:", tick_str)
-            except Exception as e:
-                logging.info("sendTelemTick error\n" + str(e) + "  " + str(type(e)))
+            tick_str = ujson.dumps(self.cur_telem)
+            self.mcast_send_socket.sendto(tick_str, (self.dstaddr, self.dstport))
 
 
 class AntKontrol:
@@ -135,8 +136,73 @@ class AntKontrol:
 
     def __init__(self):
         self.telem = TelemetrySenderUDP()
+
+        self._az_direction = -1
+        self._el_direction = 1
+
+        # locks
+        self.bno_lock = _thread.allocate_lock()
+        self._loop = uasyncio.get_event_loop()
+        self._gps = AntGPS()
+        self._gps_thread = _thread.start_new_thread(self._gps.start, ())
+
+        self._i2c_servo_mux = machine.I2C(0, scl=Pin(cfg.get("i2c_servo_scl"),
+            Pin.OUT, Pin.PULL_DOWN), sda=Pin(cfg.get("i2c_servo_sda"), Pin.OUT,
+                Pin.PULL_DOWN))
+
+        self._i2c_bno055 = machine.I2C(1,
+                scl=machine.Pin(cfg.get("i2c_bno_scl"), Pin.OUT,
+                    Pin.PULL_DOWN), sda=machine.Pin(cfg.get("i2c_bno_sda"),
+                        Pin.OUT, Pin.PULL_DOWN))
+        # on [60] ssd1306
+        self._i2c_screen = machine.I2C(-1,
+                scl=machine.Pin(cfg.get("i2c_screen_scl"), Pin.OUT,
+                    Pin.PULL_DOWN), sda=machine.Pin(cfg.get("i2c_screen_sda"),
+                        Pin.OUT, Pin.PULL_DOWN))
+        self._pinmode = False
+        # Sync time
+        # Find latitude and longitude
+        self._servo_mux = ServTor(self._i2c_servo_mux, min_us=500, max_us=2500, degrees=180)
+        self._screen = ssd1306.SSD1306_I2C(128, 32, self._i2c_screen)
+
+        self._cur_azimuth_degree = None
+        self._cur_elevation_degree = None
+        self._target_azimuth_degree = None
+        self._target_elevation_degree = None
+
+        self._bno = BNO055(self._i2c_bno055, sign=(0,0,0))
+
+        self._euler = None
+        self._pinned_euler = None
+        self._pinned_servo_pos = None
+        time.sleep(5)
+        self.conf_bno()
+        time.sleep(1)
+
+        self._servo_mux.position(EL_SERVO_INDEX, 90)
+        time.sleep(0.1)
+        self._servo_mux.position(AZ_SERVO_INDEX, 90)
+        time.sleep(0.1)
+
+        cur_orientation = self._bno.euler()
+        self._el_target = self._el_last = cur_orientation[EL_SERVO_INDEX]
+        self._az_target = self._az_last = cur_orientation[AZ_SERVO_INDEX]
+        self._el_last_raw = 90.0
+        self._az_last_raw = 90.0
+        self.do_euler_calib()
+
+        self._el_moving = False
+        self._az_moving = False
+
+        self._el_max_rate = cfg.get("elevation_max_rate")
+        self._az_max_rate = cfg.get("azimuth_max_rate")
+
+        self._orientation_thread = _thread.start_new_thread(self.update_orientation, ())
+        logging.info("starting screen thread")
         self._run_telem_thread = True
         self._telem_thread = _thread.start_new_thread(self.send_telem, ())
+        self._screen_thread = _thread.start_new_thread(self.display_status, ())
+        self._move_thread = _thread.start_new_thread(self.move_loop, ())
 
     def save_ant_calib(self):
         calib = [self._servo_mux.degrees[0], self._servo_mux.degrees[0], \
@@ -345,14 +411,14 @@ class AntKontrol:
         self._azimuth_servo_position = self._servo_mux.position(AZ_SERVO_INDEX)
 
     def updateTelem(self):
-        # self.telem.updateTelem({'euler': self._euler})
+        self.telem.updateTelem({'euler': self._euler})
         self.telem.updateTelem({'last_time': utime.ticks_ms()})
-        # self.telem.updateTelem({'gps_long': self._gps.longitude})
-        # self.telem.updateTelem({'gps_lat': self._gps.latitude})
-        # self.telem.updateTelem({'gps_valid': self._gps.valid})
-        # self.telem.updateTelem({'gps_altitude': self._gps.altitude})
-        # self.telem.updateTelem({'gps_speed': self._gps.speed})
-        # self.telem.updateTelem({'gps_course': self._gps.course})
+        self.telem.updateTelem({'gps_long': self._gps.longitude})
+        self.telem.updateTelem({'gps_lat': self._gps.latitude})
+        self.telem.updateTelem({'gps_valid': self._gps.valid})
+        self.telem.updateTelem({'gps_altitude': self._gps.altitude})
+        self.telem.updateTelem({'gps_speed': self._gps.speed})
+        self.telem.updateTelem({'gps_course': self._gps.course})
 
     def display_status(self):
         while True:
@@ -372,14 +438,13 @@ class AntKontrol:
 
     def send_telem(self):
         while self._run_telem_thread:
-            print("tick")
             try:
-                # self.touch()
+                self.touch()
                 self.updateTelem()
                 self.telem.sendTelemTick()
             except Exception as e:
                 logging.info("here{}".format(str(e)))
-            time.sleep(10)
+            time.sleep(.2)
 
     def pin(self):
         self._pinned_euler = self._euler
