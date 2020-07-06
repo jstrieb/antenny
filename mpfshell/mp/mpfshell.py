@@ -38,6 +38,7 @@ import time
 import socket
 import struct
 import shutil
+import json
 
 import colorama
 import serial
@@ -46,6 +47,8 @@ from mp.conbase import ConError
 from mp.mpfexp import MpFileExplorer, MpFileExplorerCaching, RemoteIOError
 from mp.pyboard import PyboardError
 from mp.tokenizer import Tokenizer
+
+from mp.telem_receiver import TelemReceiver
 
 
 
@@ -93,6 +96,8 @@ class MpFileShell(cmd.Cmd):
                 "elevation_max_rate": ("Servo elevation max rate: ", float),
                 "azimuth_max_rate": ("Servo azimuth max rate: ", float)
         }
+
+        self.telem_receiver = TelemReceiver(31337)
 
     def __del__(self):
         self.__disconnect()
@@ -934,33 +939,9 @@ class MpFileShell(cmd.Cmd):
         """
         print("Telemetry data:")
         try:
-            MCAST_GRP = '224.11.11.11'
-            MCAST_PORT = 31337
-            IS_ALL_GROUPS = False
-
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            if IS_ALL_GROUPS:
-                # on this port, receives ALL multicast groups
-                sock.bind(('', MCAST_PORT))
-            else:
-                # on this port, listen ONLY to MCAST_GRP
-                sock.bind((MCAST_GRP, MCAST_PORT))
-            mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
-
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-
-            while True:
-              print(sock.recv(10240))
+            print(json.dumps(self.telem_receiver.get(), indent=2))
         except KeyboardInterrupt:
-            pass
-
-        """
-        print("IMU status: ", end="")
-        print(self.fe.eval_string_expr("a.imu_status()"))
-        print("Motor status: ", end="")
-        print(self.fe.eval_string_expr("a.motor_status()"))
-        """
+            print("Got ctrl+c")
 
     def _calibration_wait_message(self, gyro_calibrated, accel_calibrated, magnet_calibrated, use_ellipsis=True):
         """
@@ -1153,8 +1134,8 @@ class MpFileShell(cmd.Cmd):
         print(ret.decode("utf-8"))
         print(ret_err.decode("utf-8"))
 
-    def do_starttelemetry(self, args):
-        """startelemetry
+    def do_start_telemetry(self, args):
+        """stop_telemetry
         Start a telemetry data sender on antenny over UDP. Restarts the
         telemetry thread if it is already running (which it is by default).
         """
@@ -1165,6 +1146,14 @@ class MpFileShell(cmd.Cmd):
         print("Starting a new telemetry-sending thread...")
         ret, ret_err = self.fe.exec_raw("a._run_telem_thread = True")
         self.fe.eval_string_expr("a._telem_thread = antenny._thread.start_new_thread(a.send_telem, ())")
+
+    def do_stop_telemetry(self, args):
+        """stop_telemetry
+        Stop the telemetry data sender on antenny over UDP.
+        """
+        print("Stopping existing telemetry-sending thread...")
+
+        ret, ret_err = self.fe.exec_raw("a._run_telem_thread = False")
 
 
 
