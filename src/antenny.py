@@ -103,9 +103,7 @@ class TelemetrySenderUDP:
         self.initSocket()
 
     def initSocket(self):
-        self.mcast_send_socket = socket.socket(socket.AF_INET,
-                socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        #self.mcast_send_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        self.mcast_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def set_destination(self, multicast_ipaddr):
         self.dstaddr = multicast_ipaddr
@@ -118,11 +116,12 @@ class TelemetrySenderUDP:
 
     def sendTelemTick(self):
         with self.socket_lock:
-            tick_str = ujson.dumps(self.cur_telem)
+            tick_str = ujson.dumps(self.cur_telem).encode("utf-8")
             try:
                 self.mcast_send_socket.sendto(tick_str, (self.dstaddr, self.dstport))
+                print("Sending:", tick_str)
             except Exception as e:
-                logging.info("sendTelemTick error\n" + str(e))
+                logging.info("sendTelemTick error\n" + str(e) + "  " + str(type(e)))
 
 
 class AntKontrol:
@@ -373,6 +372,7 @@ class AntKontrol:
 
     def send_telem(self):
         while self._run_telem_thread:
+            print("tick")
             try:
                 # self.touch()
                 self.updateTelem()

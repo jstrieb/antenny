@@ -1,15 +1,11 @@
 import socket
+import json
 
-UDP_IP = '192.168.1.36'
 UDP_PORT = 31337
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-# sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.bind((UDP_IP, UDP_PORT))
-
-# sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+sock.bind(('', UDP_PORT))
 
 while True:
-  # For Python 3, change next line to "print(sock.recv(10240))"
-  print(sock.recv(10240))
-
+    data = json.loads(sock.recv(10240).decode('utf-8'))
+    print(json.dumps(data, indent=2))
