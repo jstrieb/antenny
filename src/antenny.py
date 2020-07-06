@@ -122,7 +122,7 @@ class TelemetrySenderUDP:
             try:
                 self.mcast_send_socket.sendto(tick_str, (self.dstaddr, self.dstport))
             except Exception as e:
-                logging.info("Inner error\n" + str(e))
+                logging.info("sendTelemTick error\n" + str(e))
 
 
 class AntKontrol:
